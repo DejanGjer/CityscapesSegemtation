@@ -13,6 +13,7 @@ import os
 
 import config
 from dataset import Dataset
+from visualization import visualize_samples
 
 metric = evaluate.load("mean_iou")
 
@@ -138,11 +139,12 @@ if __name__ == "__main__":
         compute_metrics=compute_metrics
     )
     trainer.train()
-    # preds, gts, test_metrics = trainer.predict(test_ds)
-    # wandb.log(test_metrics)
-    # print("TESTING")
-    # print(preds.shape)
-    # print(gts.shape)
+    preds, gts, test_metrics = trainer.predict(test_ds)
+    wandb.log(test_metrics)
+    print("TESTING")
+    print(preds.shape)
+    print(gts.shape)
+    visualize_samples(gts, preds, os.path.join(config.save_root_dir, "plots"), True, config.num_inference_samples)
     # logits_tensor = torch.from_numpy(preds)
     # logits_tensor = nn.functional.interpolate(
     #     logits_tensor,

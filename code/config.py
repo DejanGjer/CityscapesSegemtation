@@ -3,14 +3,14 @@ checkpoint = "nvidia/mit-b0"
 
 # dataset
 to_sample = True
-sample_size = 80
+sample_size = 20
 
 learning_rate = 7e-4
-batch_size = 24
-num_epochs = 6
+batch_size = 10
+num_epochs = 1
 
-train_log_steps = 50
-eval_log_steps = 50
+train_log_steps = 2
+eval_log_steps = 2
 data_seed = 42
 
 # save directories
