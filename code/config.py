@@ -1,6 +1,10 @@
 project_name="cityscapes_segmentation"
 checkpoint = "nvidia/mit-b0"
 
+# dataset
+to_sample = True
+sample_size = 80
+
 learning_rate = 7e-4
 batch_size = 24
 num_epochs = 6
