@@ -17,11 +17,10 @@ class Dataset:
             self.train_ds = self.train_ds.select(range(sample_size))
             self.validation_ds = self.validation_ds.select(range(sample_size))
             self.test_ds = self.test_ds.select(range(sample_size))
+            print("Dataset is sampled")
         # create lebel2id and id2label dictionaries
         self.label2id = {label.name: label.id for label in labels}
         self.id2label = {label.id: label.name for label in labels}
-        print(self.label2id)
-        print(self.id2label)
         # load image processor
         self.image_processor = AutoImageProcessor.from_pretrained(checkpoint)
         self.jitter = ColorJitter(brightness=0.25, contrast=0.25, saturation=0.25, hue=0.1)

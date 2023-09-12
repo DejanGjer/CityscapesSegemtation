@@ -7,34 +7,19 @@ import evaluate
 import numpy as np
 import torch
 from torch import nn
-from transformers import AutoModelForSemanticSegmentation, TrainingArguments, Trainer
+from transformers import AutoModelForSemanticSegmentation, AdamW, get_scheduler
 import wandb
 import os
+import random
+from tqdm import tqdm
 
 import config
 from dataset import Dataset
 from visualization import visualize_samples, visualize_mask
 
-metric = evaluate.load("mean_iou")
-
-def compute_metrics(eval_pred):
+def compute_metrics(metric, num_labels):
     with torch.no_grad():
-        logits, labels = eval_pred
-        print(logits.shape)
-        print(labels.shape)
-        logits_tensor = torch.from_numpy(logits)
-        logits_tensor = nn.functional.interpolate(
-            logits_tensor,
-            size=labels.shape[-2:],
-            mode="bilinear",
-            align_corners=False,
-        ).argmax(dim=1)
-        print(logits_tensor.shape)
-
-        pred_labels = logits_tensor.detach().cpu().numpy()
         metrics = metric.compute(
-            predictions=pred_labels,
-            references=labels,
             num_labels=num_labels,
             ignore_index=255,
             reduce_labels=False,
@@ -43,87 +28,75 @@ def compute_metrics(eval_pred):
             if type(value) is np.ndarray:
                 metrics[key] = value.tolist()
         return metrics
+    
+def add_batch_to_metrics(metric, logits, labels):
+    with torch.no_grad():
+        logits = nn.functional.interpolate(
+            logits,
+            size=labels.shape[-2:],
+            mode="bilinear",
+            align_corners=False,
+        ).argmax(dim=1)
+        pred_labels = logits.detach().cpu().numpy()
+        metric.add_batch(
+            predictions=pred_labels,
+            references=labels
+        )
+    
+def validate(model, eval_ds, num_labels):
+    model.eval()
+    eval_loss = 0
+    progress_bar = tqdm(range(len(eval_ds)), desc=f"Evaluating")
+    for batch in eval_ds:
+        input_image = batch["pixel_values"].to(device)
+        labels = batch["labels"].to(device)
+        with torch.no_grad():
+            outputs = model(pixel_values=input_image, labels=labels)
+            loss = outputs.loss
+            eval_loss += loss.item()
+            add_batch_to_metrics(metric, outputs.logits, labels)
+        progress_bar.update(1)
+    metric_results = compute_metrics(metric, num_labels)
+    return {
+        "eval/loss": eval_loss / len(eval_ds),
+        "eval/mIoU": metric_results["mean_iou"],
+        "eval/mean_acc": metric_results["mean_accuracy"],
+        "eval/overall_acc": metric_results["overall_accuracy"],
+    }
 
-# def extract_single_channel(image):
-#     # Split the image into channels (R, G, B)
-#     r, _, _ = image.split()
-
-#     # Create a new single-channel image using the channel you want (e.g., red channel)
-#     return r
-
-# def train_transforms(example_batch):
-#     images = [jitter(x) for x in example_batch["image"]]
-#     labels = [extract_single_channel(x) for x in example_batch["semantic_segmentation"]]
-#     inputs = image_processor(images, labels)
-#     return inputs
-
-
-# def val_transforms(example_batch):
-#     images = [x for x in example_batch["image"]]
-#     labels = [extract_single_channel(x) for x in example_batch["semantic_segmentation"]]
-#     inputs = image_processor(images, labels)
-#     return inputs
-
-
-# def get_dataset():
-#     dataset = load_dataset("Chris1/cityscapes")
-#     train_ds = dataset["train"]
-#     validation_ds = dataset["validation"]
-#     test_ds = dataset["test"]
-#     print(train_ds)
-#     print(validation_ds)
-#     print(test_ds)
-#     return train_ds, validation_ds, test_ds
-
-def prepare_training(learning_rate, bacth_size, num_epochs, train_log_steps, eval_log_steps, 
-                     num_of_checkpoints, save_dir, data_seed):
-    return TrainingArguments(
-        output_dir=save_dir,
-        learning_rate=learning_rate,
-        num_train_epochs=num_epochs,
-        per_device_train_batch_size=bacth_size,
-        per_device_eval_batch_size=bacth_size,
-        save_total_limit=num_of_checkpoints,
-        evaluation_strategy="steps",
-        save_strategy="steps",
-        save_steps=eval_log_steps,
-        eval_steps=eval_log_steps,
-        logging_steps=train_log_steps,
-        eval_accumulation_steps=5,
-        remove_unused_columns=False,
-        data_seed = data_seed,
-        report_to="wandb"
-    )
+# def prepare_training(learning_rate, bacth_size, num_epochs, train_log_steps, eval_log_steps, 
+#                      num_of_checkpoints, save_dir, data_seed):
+#     return TrainingArguments(
+#         output_dir=save_dir,
+#         learning_rate=learning_rate,
+#         num_train_epochs=num_epochs,
+#         per_device_train_batch_size=bacth_size,
+#         per_device_eval_batch_size=bacth_size,
+#         save_total_limit=num_of_checkpoints,
+#         evaluation_strategy="steps",
+#         save_strategy="steps",
+#         save_steps=eval_log_steps,
+#         eval_steps=eval_log_steps,
+#         logging_steps=train_log_steps,
+#         eval_accumulation_steps=5,
+#         remove_unused_columns=False,
+#         data_seed = data_seed,
+#         report_to="wandb"
+#     )
 
 
 if __name__ == "__main__":
+    # set the seeds for reproducibility
+    torch.manual_seed(config.seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    random.seed(config.seed)
+    np.random.seed(config.seed)
+
     # login to wandb
     api_key = os.environ['WANDB_API_KEY']
     wandb.login(key=api_key)
     run = wandb.init(project=config.project_name)
-    # train_ds, validation_ds, test_ds = get_dataset()
-    # train_ds = train_ds.select(range(80))
-    # validation_ds = validation_ds.select(range(16))
-    # test_ds = test_ds.select(range(16))
-    # create lebel2id and id2label dictionaries
-    # label2id = {label.name: label.id for label in labels}
-    # id2label = {label.id: label.name for label in labels}
-    # print(label2id)
-    # print(id2label)
-    # # load image processor
-    # image_processor = AutoImageProcessor.from_pretrained(config.checkpoint)
-    # jitter = ColorJitter(brightness=0.25, contrast=0.25, saturation=0.25, hue=0.1)
-    # # transform the dataset
-    # train_ds.set_transform(train_transforms)
-    # validation_ds.set_transform(val_transforms)
-    # test_ds.set_transform(val_transforms)
-    # example = train_ds[0]
-    # ex_image = example["pixel_values"]
-    # ex_labels = example["labels"]
-    # print(type(ex_image))
-    # print(ex_image.shape)
-    # print(type(ex_labels))
-    # print(ex_labels.shape)
 
     dataset = Dataset(config.checkpoint, config.batch_size, config.to_sample, config.sample_size)
     train_ds = dataset.get_train_dataloader()
@@ -132,82 +105,63 @@ if __name__ == "__main__":
     num_labels = dataset.get_num_labels()
 
     model = AutoModelForSemanticSegmentation.from_pretrained(config.checkpoint, id2label=dataset.id2label, label2id=dataset.label2id)
-    training_args = prepare_training(config.learning_rate, config.batch_size, config.num_epochs, config.train_log_steps,
-                                     config.eval_log_steps, config.num_of_checkpoints, config.save_root_dir, config.data_seed)
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_ds,
-        eval_dataset=validation_ds,
-        compute_metrics=compute_metrics
+    optimizer = AdamW(model.parameters(), lr=config.learning_rate)
+    num_training_steps = config.num_epochs * len(train_ds)
+    lr_scheduler = get_scheduler(
+        "linear",
+        optimizer=optimizer,
+        num_warmup_steps=0,
+        num_training_steps=num_training_steps
     )
+    metric = evaluate.load("mean_iou")
+    # prepare training device
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    model.to(device)
+    print(f"Model is trained on device {device}")
+
+    # training loop
+    loss_history = []
+    print("Start training")
+    for epoch in range(config.num_epochs):
+        epoch_loss_history = []
+        progress_bar = tqdm(range(len(train_ds)), desc=f"Epoch {epoch + 1}")
+        model.train()
+        for i, batch in enumerate(train_ds):
+            input_image = batch["pixel_values"].to(device)
+            labels = batch["labels"].to(device)
+            outputs = model(pixel_values=input_image, labels=labels)
+            loss = outputs.loss
+            if i % config.train_log_steps == 0:
+                wandb.log({"train/loss": loss.item()}, step=epoch * len(train_ds) + i)
+            epoch_loss_history.append(loss.item())
+            loss.backward()
+            optimizer.step()
+            lr_scheduler.step()
+            optimizer.zero_grad()
+            progress_bar.update(1)
+        
+        loss_history.append(epoch_loss_history)
+        eval_results = validate(model, validation_ds, num_labels)
+        wandb.log(eval_results, step=(epoch + 1) * len(train_ds) - 1)
+
+    # training_args = prepare_training(config.learning_rate, config.batch_size, config.num_epochs, config.train_log_steps,
+    #                                  config.eval_log_steps, config.num_of_checkpoints, config.save_root_dir, config.data_seed)
+    # trainer = Trainer(
+    #     model=model,
+    #     args=training_args,
+    #     train_dataset=train_ds,
+    #     eval_dataset=validation_ds,
+    #     compute_metrics=compute_metrics
+    # )
     # trainer.train()
     # trainer.predict(test_ds)
-    model.eval()
-    for example in test_ds:
-        input_image = example["pixel_values"]
-        output = model(input_image)
-        print(output.loss, output.logits.shape)
 
-    # print("Prediction result")
-    # print(output.shape)
-    # print("Visualizing gts")
-    # for i in range(len(gts)):
-    #     visualize_mask(gts[i], os.path.join(config.save_root_dir, "plots"), i)
-    # wandb.log(test_metrics)
-    # print("TESTING")
-    # print(preds.shape)
-    # print(gts.shape)
-    # visualize_samples(gts, preds, os.path.join(config.save_root_dir, "plots"), True, config.num_inference_samples)
-    # logits_tensor = torch.from_numpy(preds)
-    # logits_tensor = nn.functional.interpolate(
-    #     logits_tensor,
-    #     size=gts.shape[-2:],
-    #     mode="bilinear",
-    #     align_corners=False,
-    # ).argmax(dim=1)
-    # print(logits_tensor.shape)
-    # pred_labels = logits_tensor.detach().cpu().numpy()
-    # # randomly chose 10 images from the test set and log them to wandb
-    # for i in range(config.num_inference_samples):
-    #     index = np.random.randint(0, len(test_ds))
-    #     original_image = test_ds[index]["pixel_values"]
-    #     # convert original_iamge from (3, 512, 512) to (512, 512, 3)
-    #     original_image = np.transpose(original_image, (1, 2, 0))
-    #     prediction_mask = pred_labels[index]
-    #     ground_truth_mask = test_ds[index]["labels"]
-    #     class_labels = id2label
-    #     wandb.log(
-    #         {f"image_{index}" : wandb.Image(original_image, masks={
-    #             "predictions" : {
-    #                 "mask_data" : prediction_mask,
-    #                 "class_labels" : class_labels
-    #             },
-    #             "ground_truth" : {
-    #                 "mask_data" : ground_truth_mask,
-    #                 "class_labels" : class_labels
-    #             }
-    #         })})
-        
 
-    # index = 0
-    # original_image = validation_ds[index]["pixel_values"]
-    # # convert original_iamge from (3, 512, 512) to (512, 512, 3)
-    # original_image = np.transpose(original_image, (1, 2, 0))
-    # prediction_mask = pred_labels[index]
-    # ground_truth_mask = validation_ds[index]["labels"]
-    # class_labels = id2label
-    # wandb.log(
-    #     {"my_image_key" : wandb.Image(original_image, masks={
-    #         "predictions" : {
-    #             "mask_data" : prediction_mask,
-    #             "class_labels" : class_labels
-    #         },
-    #         "ground_truth" : {
-    #             "mask_data" : ground_truth_mask,
-    #             "class_labels" : class_labels
-    #         }
-    #     })})
+    # model.eval()
+    # for example in test_ds:
+    #     input_image = example["pixel_values"]
+    #     output = model(**example)
+    #     print(output.loss, output.logits.shape)
 
     wandb.finish()
 
