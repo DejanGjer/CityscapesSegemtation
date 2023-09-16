@@ -1,12 +1,12 @@
 project_name="cityscapes_segmentation"
-checkpoint = "nvidia/mit-b0"
+checkpoint = "facebook/maskformer-swin-base-ade"
 
 # dataset
 to_sample = True
 sample_size = 200
 
 learning_rate = 7e-4
-batch_size = 16
+batch_size = 2
 num_epochs = 2
 
 # logging

@@ -7,7 +7,7 @@ import evaluate
 import numpy as np
 import torch
 from torch import nn
-from transformers import AutoModelForSemanticSegmentation, AdamW, get_scheduler
+from transformers import AutoModelForSemanticSegmentation, AdamW, get_scheduler, MaskFormerForInstanceSegmentation
 import wandb
 import os
 import random
@@ -83,6 +83,18 @@ def validate(model, eval_ds, id2labels, num_images_to_log):
     result_dict.update(image_log_dict)
     return result_dict
 
+def move_batch_to_device_maksformer(batch):
+    pixel_values = batch["pixel_values"].to(device)
+    pixel_mask = batch["pixel_mask"].to(device)
+    mask_labels = batch["mask_labels"]
+    for i in range(len(mask_labels)):
+        mask_labels[i] = mask_labels[i].to(device)
+    class_labels = batch["class_labels"]
+    for i in range(len(class_labels)):
+        class_labels[i] = class_labels[i].to(device)
+    return {"pixel_values": pixel_values, "pixel_mask": pixel_mask, "class_labels": class_labels, "mask_labels": mask_labels}
+
+
 # def prepare_training(learning_rate, bacth_size, num_epochs, train_log_steps, eval_log_steps, 
 #                      num_of_checkpoints, save_dir, data_seed):
 #     return TrainingArguments(
@@ -123,7 +135,7 @@ if __name__ == "__main__":
     test_ds = dataset.get_test_dataloader()
     num_labels = dataset.get_num_labels()
 
-    model = AutoModelForSemanticSegmentation.from_pretrained(config.checkpoint, id2label=dataset.id2label, label2id=dataset.label2id)
+    model = MaskFormerForInstanceSegmentation.from_pretrained(config.checkpoint, id2label=dataset.id2label, label2id=dataset.label2id, ignore_mismatched_sizes=True)
     optimizer = AdamW(model.parameters(), lr=config.learning_rate)
     num_training_steps = config.num_epochs * len(train_ds)
     lr_scheduler = get_scheduler(
@@ -146,9 +158,9 @@ if __name__ == "__main__":
         progress_bar = tqdm(range(len(train_ds)), desc=f"Epoch {epoch + 1}")
         model.train()
         for i, batch in enumerate(train_ds):
-            input_image = batch["pixel_values"].to(device)
-            labels = batch["labels"].to(device)
-            outputs = model(pixel_values=input_image, labels=labels)
+            input = move_batch_to_device_maksformer(batch)
+            outputs = model(pixel_values=input["pixel_values"], pixel_mask=input["pixel_mask"], 
+                            mask_labels=input["mask_labels"], class_labels=input["class_labels"])
             loss = outputs.loss
             if i % config.train_log_steps == 0:
                 wandb.log({"train/loss": loss.item()}, step=epoch * len(train_ds) + i)
@@ -160,8 +172,10 @@ if __name__ == "__main__":
             progress_bar.update(1)
         
         loss_history.append(epoch_loss_history)
-        eval_results = validate(model, validation_ds, dataset.id2label, config.eval_images_to_log)
-        wandb.log(eval_results, step=(epoch + 1) * len(train_ds) - 1)
+        # eval_results = validate(model, validation_ds, dataset.id2label, config.eval_images_to_log)
+        # wandb.log(eval_results, step=(epoch + 1) * len(train_ds) - 1)
+
+
 
     # training_args = prepare_training(config.learning_rate, config.batch_size, config.num_epochs, config.train_log_steps,
     #                                  config.eval_log_steps, config.num_of_checkpoints, config.save_root_dir, config.data_seed)

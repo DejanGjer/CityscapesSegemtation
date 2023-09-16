@@ -2,12 +2,15 @@ from datasets import load_dataset
 from transformers import AutoImageProcessor
 from torchvision.transforms import ColorJitter
 from torch.utils.data import DataLoader
+import numpy as np
+import torch
 
 from labels import labels
 
 class Dataset:
-    def __init__(self, checkpoint, batch_size, to_sample=False, sample_size=80):
+    def __init__(self, checkpoint, image_size, batch_size, to_sample=False, sample_size=80):
         self.chekpoint = checkpoint
+        self.image_size = image_size
         self.batch_size = batch_size
         self.to_sample = to_sample
         self.sample_size = sample_size
@@ -21,8 +24,17 @@ class Dataset:
         # create lebel2id and id2label dictionaries
         self.label2id = {label.name: label.id for label in labels}
         self.id2label = {label.id: label.name for label in labels}
+        # create lebel2id and id2label dictionaries
+        self.original_label2id = {label.name: label.id for label in labels}
+        self.original_id2label = {label.id: label.name for label in labels}
+        # get labels that we want to use for training and validation
+        self.selected_classes = [label for label in labels if label.ignoreInEval == False]
+        self.id2label = {0: "other"}
+        self.label2id = {"other": 0}
+        self.id2label.update({i + 1: label.name for i, label in enumerate(self.selected_classes)})
+        self.label2id.update({label.name: i + 1 for i, label in enumerate(self.selected_classes)})
         # load image processor
-        self.image_processor = AutoImageProcessor.from_pretrained(checkpoint)
+        self.image_processor = AutoImageProcessor.from_pretrained(checkpoint, do_resize=True, size=self.image_size, reduce_labels=False)
         self.jitter = ColorJitter(brightness=0.25, contrast=0.25, saturation=0.25, hue=0.1)
         # set format of datasets to torch
         self.train_ds.set_format("torch")
@@ -48,6 +60,7 @@ class Dataset:
         print(ex_image.shape)
         print(type(ex_labels))
         print(ex_labels.shape)
+        print(torch.unique(ex_labels[0]))
 
 
     def extract_single_channel(self, image):
@@ -58,18 +71,28 @@ class Dataset:
         return r
 
     def train_transforms(self, example_batch):
-        images = [self.jitter(x) for x in example_batch["image"]]
-        labels = [self.extract_single_channel(x) for x in example_batch["semantic_segmentation"]]
+        images = [np.array(self.jitter(x)) for x in example_batch["image"]]
+        labels = [self.map_training_labels(self.extract_single_channel(x)) for x in example_batch["semantic_segmentation"]]
         inputs = self.image_processor(images, labels)
         return inputs
 
 
     def test_transforms(self, example_batch):
-        images = [x for x in example_batch["image"]]
-        labels = [self.extract_single_channel(x) for x in example_batch["semantic_segmentation"]]
+        images = [np.array(x) for x in example_batch["image"]]
+        labels = [self.map_training_labels(self.extract_single_channel(x)) for x in example_batch["semantic_segmentation"]]
         inputs = self.image_processor(images, labels)
         return inputs
 
+    def map_label(self, label):
+        label_name = self.original_id2label[label]
+        if label_name in self.label2id:
+            return self.label2id[label_name]
+        else:
+            return 0
+
+    def map_training_labels(self, labels):
+        labels = np.array(labels)
+        return np.vectorize(self.map_label)(labels)
 
     def load_or_download_dataset(self):
         dataset = load_dataset("Chris1/cityscapes")
@@ -100,4 +123,4 @@ class Dataset:
         return self.original_test_dataloader
     
     def get_num_labels(self):
-        return len(self.label2id) - 1 # we subtract one because we ignore -1 label
+        return len(self.label2id)

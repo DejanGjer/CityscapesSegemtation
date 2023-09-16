@@ -2,6 +2,7 @@ from datasets import load_dataset
 from transformers import AutoImageProcessor
 from torchvision.transforms import ColorJitter
 from torch.utils.data import DataLoader
+import torch
 
 from labels import labels
 
@@ -33,22 +34,28 @@ class Dataset:
         self.validation_ds_transformed = self.validation_ds.with_transform(self.test_transforms)
         self.test_ds_transformed = self.test_ds.with_transform(self.test_transforms) 
          
-        self.train_dataloader = DataLoader(self.train_ds_transformed, batch_size=self.batch_size, shuffle=True)
-        self.validation_dataloader = DataLoader(self.validation_ds_transformed, batch_size=self.batch_size, shuffle=False)
-        self.test_dataloader = DataLoader(self.test_ds_transformed, batch_size=self.batch_size, shuffle=False)
+        self.train_dataloader = DataLoader(self.train_ds_transformed, batch_size=self.batch_size, shuffle=True, collate_fn=self.collate_fn)
+        self.validation_dataloader = DataLoader(self.validation_ds_transformed, batch_size=self.batch_size, shuffle=False, collate_fn=self.collate_fn)
+        self.test_dataloader = DataLoader(self.test_ds_transformed, batch_size=self.batch_size, shuffle=False, collate_fn=self.collate_fn)
 
         self.original_trained_dataloader = DataLoader(self.train_ds, batch_size=self.batch_size, shuffle=True)
         self.original_validation_dataloader = DataLoader(self.validation_ds, batch_size=self.batch_size, shuffle=False)
         self.original_test_dataloader = DataLoader(self.test_ds, batch_size=self.batch_size, shuffle=False)
 
-        example = next(iter(self.train_dataloader))
-        ex_image = example["pixel_values"]
-        ex_labels = example["labels"]
-        print(type(ex_image))
-        print(ex_image.shape)
-        print(type(ex_labels))
-        print(ex_labels.shape)
+        # example = next(iter(self.train_dataloader))
+        # ex_image = example["pixel_values"]
+        # ex_labels = example["labels"]
+        # print(type(ex_image))
+        # print(ex_image.shape)
+        # print(type(ex_labels))
+        # print(ex_labels.shape)
 
+    def collate_fn(self, batch):
+        pixel_values = torch.stack([example["pixel_values"] for example in batch])
+        pixel_mask = torch.stack([example["pixel_mask"] for example in batch])
+        class_labels = [example["class_labels"] for example in batch]
+        mask_labels = [example["mask_labels"] for example in batch]
+        return {"pixel_values": pixel_values, "pixel_mask": pixel_mask, "class_labels": class_labels, "mask_labels": mask_labels}
 
     def extract_single_channel(self, image):
         # Split the image into channels (R, G, B)
@@ -60,7 +67,7 @@ class Dataset:
     def train_transforms(self, example_batch):
         images = [self.jitter(x) for x in example_batch["image"]]
         labels = [self.extract_single_channel(x) for x in example_batch["semantic_segmentation"]]
-        inputs = self.image_processor(images, labels)
+        inputs = self.image_processor(images, labels, return_tensors="pt")
         return inputs
 
 
@@ -69,7 +76,6 @@ class Dataset:
         labels = [self.extract_single_channel(x) for x in example_batch["semantic_segmentation"]]
         inputs = self.image_processor(images, labels)
         return inputs
-
 
     def load_or_download_dataset(self):
         dataset = load_dataset("Chris1/cityscapes")

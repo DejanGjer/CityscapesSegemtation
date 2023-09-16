@@ -24,6 +24,7 @@ data/
 *.csv
 *.json
 *.pkl
+*.bin
 
 # Ignore model checkpoints and logs (modify this based on your specific setup)
 **/wandb/
