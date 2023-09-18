@@ -7,7 +7,7 @@ import evaluate
 import numpy as np
 import torch
 from torch import nn
-from transformers import AutoModelForSemanticSegmentation, AdamW, get_scheduler
+from transformers import AutoModelForSemanticSegmentation, AdamW, get_scheduler, get_polynomial_decay_schedule_with_warmup
 import wandb
 import os
 import random
@@ -38,13 +38,14 @@ def add_batch_to_metrics(metric, logits, labels):
             align_corners=False,
         ).argmax(dim=1)
         pred_labels = logits.detach().cpu().numpy()
+        labels = labels.detach().cpu().numpy()
         metric.add_batch(
             predictions=pred_labels,
             references=labels
         )
     return pred_labels
     
-def validate(model, eval_ds, id2labels, num_images_to_log):
+def validate(model, metric, eval_ds, id2labels, num_images_to_log, device):
     num_labels = len(id2labels)
     model.eval()
     eval_loss = 0
@@ -98,21 +99,35 @@ if __name__ == "__main__":
     wandb.login(key=api_key)
     run = wandb.init(project=config.project_name)
 
-    dataset = Dataset(config.checkpoint, config.image_size, config.batch_size, config.to_sample, config.sample_size)
+    dataset = Dataset(config.model_type, config.image_size, config.batch_size, config.to_sample, config.sample_size)
     train_ds = dataset.get_train_dataloader()
     validation_ds = dataset.get_validation_dataloader()
-    test_ds = dataset.get_test_dataloader()
+    # test_ds = dataset.get_test_dataloader()
     num_labels = dataset.get_num_labels()
 
-    model = AutoModelForSemanticSegmentation.from_pretrained(config.checkpoint, id2label=dataset.id2label, label2id=dataset.label2id)
+    model = AutoModelForSemanticSegmentation.from_pretrained(config.model_checkpoint, id2label=dataset.id2label, label2id=dataset.label2id)
     optimizer = AdamW(model.parameters(), lr=config.learning_rate)
+    if config.optimier_checkpoint is not None:
+        optimizer.load_state_dict(torch.load(config.optimier_checkpoint))
     num_training_steps = config.num_epochs * len(train_ds)
-    lr_scheduler = get_scheduler(
-        "linear",
-        optimizer=optimizer,
-        num_warmup_steps=0,
-        num_training_steps=num_training_steps
-    )
+    lr_scheduler = None
+    if config.scheduler_type == "linear":
+        lr_scheduler = get_scheduler(
+            "linear",
+            optimizer=optimizer,
+            num_warmup_steps=0,
+            num_training_steps=num_training_steps
+        )
+    elif config.scheduler_type == "polynomial":
+        lr_scheduler = get_polynomial_decay_schedule_with_warmup(
+            optimizer=optimizer,
+            num_warmup_steps=0,
+            num_training_steps=num_training_steps,
+            lr_end=0.0,
+            power=1.0
+        )
+    if config.lr_scheduler_checkpoint is not None:
+        lr_scheduler.load_state_dict(torch.load(config.lr_scheduler_checkpoint))
     metric = evaluate.load("mean_iou")
     # prepare training device
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -140,11 +155,13 @@ if __name__ == "__main__":
             optimizer.zero_grad()
             progress_bar.update(1)
         
-        eval_results = validate(model, validation_ds, dataset.id2label, config.eval_images_to_log)
+        eval_results = validate(model, metric, validation_ds, dataset.id2label, config.eval_images_to_log, device)
         # save model if it is the best one
         if eval_results["eval/mIoU"] > best_miou:
             best_miou = eval_results["eval/mIoU"]
-            model.save_pretrained(os.path.join(config.save_root_dir, f"{config.checkpoint.replace('/', '-')}_{epoch}"))
+            model.save_pretrained(os.path.join(config.save_root_dir, f"{config.model_type.replace('/', '-')}_{epoch}"))
+            torch.save(optimizer.state_dict(), os.path.join(config.save_root_dir, f"{config.model_type.replace('/', '-')}_{epoch}/optimizer.pth"))
+            torch.save(lr_scheduler.state_dict(), os.path.join(config.save_root_dir, f"{config.model_type.replace('/', '-')}_{epoch}/lr_scheduler.pth"))
         wandb.log(eval_results, step=(epoch + 1) * len(train_ds) - 1)
 
     wandb.finish()

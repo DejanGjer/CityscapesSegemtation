@@ -12,6 +12,7 @@ import wandb
 import os
 import matplotlib.pyplot as plt
 import random
+from PIL import Image
 
 from labels import labels
 
@@ -50,28 +51,53 @@ def visualize_sample(prediction_mask, gt_mask, save_dir, index):
         pred_seg[prediction_mask == label.id] = label.color
         gt_seg[gt_mask == label.id] = label.color
     # save images
-    plot_image(pred_seg, f"Prediction {index}", os.path.join(save_dir, f"prediction_{index}.png"))
-    plot_image(gt_seg, f"Ground Truth {index}", os.path.join(save_dir, f"ground_truth_{index}.png"))
+    save_image(pred_seg, os.path.join(save_dir, f"prediction_{index}.png"))
+    save_image(gt_seg, os.path.join(save_dir, f"ground_truth_{index}.png"))
 
-def visualize_mask(mask, save_dir, index):
+def visualize_mask(mask, save_dir, index, prefix=""):
     # create directory if not exists
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
+    # if mask is given in 3 channels format convert it to 1 channel
+    if mask.shape[-1] == 3:
+        mask = mask[:, :, 0]
     # get all label ids from gt_mask
     print(np.unique(mask))
     seg = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)
     for label in labels:
         seg[mask == label.id] = label.color
     # save images
-    plot_image(seg, f"Image {index}", os.path.join(save_dir, f"image{index}.png"))
+    save_image(seg, os.path.join(save_dir, f"{prefix}mask_{index}.png"))
 
-def plot_image(image, title, save_path):
-    # Plot only segmentation map
-    plt.figure(figsize=(15, 10))
-    plt.title(title)
-    plt.axis("off")
-    plt.imshow(image)
-    # save image
-    plt.savefig(save_path)
+def visualize_image(image, save_dir, index, prefix=""):
+    # create directory if not exists
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    # save images
+    save_image(image, os.path.join(save_dir, f"{prefix}image_{index}.png"))
+
+def visualize_image_with_mask(image, mask, save_dir, index, prefix=""):
+    # create directory if not exists
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    # if mask is given in 3 channels format convert it to 1 channel
+    if mask.shape[-1] == 3:
+        mask = mask[:, :, 0]
+    # get all label ids from gt_mask
+    print(np.unique(mask))
+    seg = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)
+    for label in labels:
+        seg[mask == label.id] = label.color
+    print("Debug")
+    image = (image * 0.5 + seg * 0.5).astype(np.uint8)
+    print(np.max(image))
+    print(np.min(image))
+    print(image)
+    # save images
+    save_image(image, os.path.join(save_dir, f"{prefix}image_with_mask_{index}.png"))
+
+def save_image(image, save_path):
+    image = Image.fromarray(image)
+    image.save(save_path)
 
         
