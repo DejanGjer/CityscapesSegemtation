@@ -12,6 +12,7 @@ import wandb
 import os
 import random
 from tqdm import tqdm
+import time
 
 import config
 from dataset import Dataset
@@ -30,6 +31,7 @@ def compute_metrics(metric, num_labels):
         return metrics
     
 def add_batch_to_metrics(metric, logits, labels):
+    # start_time = time.time()
     with torch.no_grad():
         logits = nn.functional.interpolate(
             logits,
@@ -37,12 +39,18 @@ def add_batch_to_metrics(metric, logits, labels):
             mode="bilinear",
             align_corners=False,
         ).argmax(dim=1)
+        # interpolate_time = time.time()
+        # print(f"Interpolate time: {interpolate_time - start_time}")
         pred_labels = logits.detach().cpu().numpy()
         labels = labels.detach().cpu().numpy()
+        # to_cpu_time = time.time()
+        # print(f"To cpu time: {to_cpu_time - interpolate_time}")
         metric.add_batch(
             predictions=pred_labels,
             references=labels
         )
+        # add_metrics_time = time.time()
+        # print(f"Add metrics time: {add_metrics_time - to_cpu_time}")
     return pred_labels
     
 def validate(model, metric, eval_ds, id2labels, num_images_to_log, device):
@@ -51,17 +59,27 @@ def validate(model, metric, eval_ds, id2labels, num_images_to_log, device):
     eval_loss = 0
     progress_bar = tqdm(range(len(eval_ds)), desc=f"Evaluating")
     image_log_dict = {}
+    # start_time = time.time()
     for i, batch in enumerate(eval_ds):
         input_image = batch["pixel_values"].to(device)
         gt_labels = batch["labels"].to(device)
+        # loaded_time = time.time()
+        # print(f"Loaded time: {loaded_time - start_time}")
         with torch.no_grad():
             outputs = model(pixel_values=input_image, labels=gt_labels)
+            # forward_time = time.time()
+            # print(f"Forward time: {forward_time - loaded_time}")
             loss = outputs.loss
             eval_loss += loss.item()
+            # loss_time = time.time()
+            # print(f"Loss time: {loss_time - forward_time}")
             pred_labels = add_batch_to_metrics(metric, outputs.logits, gt_labels)
+            # log_time = time.time()
+            # print(f"Log time: {log_time - forward_time}")
         if i == 0:
             input_image = input_image.cpu().numpy()
             gt_labels = gt_labels.cpu().numpy()
+            pred_labels = pred_labels.cpu().numpy()
             for i in range(min(gt_labels.shape[0], num_images_to_log)):
                 image_log_dict[f"eval/image_{i}"] = wandb.Image(np.transpose(input_image[i], (1, 2, 0)), masks={
                     "predictions" : {
@@ -73,8 +91,14 @@ def validate(model, metric, eval_ds, id2labels, num_images_to_log, device):
                         "class_labels" : id2labels
                     }
                 })
+            # image_log_time = time.time()
+            # print(f"Image log time: {image_log_time - log_time}")
         progress_bar.update(1)
+        # start_time = time.time()
+    # start_time = time.time()
     metric_results = compute_metrics(metric, num_labels)
+    # compute_time = time.time()
+    # print(f"Compute metrics time: {compute_time - start_time}")
     print(metric_results)
     result_dict = {
         "eval/loss": eval_loss / len(eval_ds),
@@ -105,7 +129,13 @@ if __name__ == "__main__":
     # test_ds = dataset.get_test_dataloader()
     num_labels = dataset.get_num_labels()
 
+    # prepare training device
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
     model = AutoModelForSemanticSegmentation.from_pretrained(config.model_checkpoint, id2label=dataset.id2label, label2id=dataset.label2id)
+    model.to(device)
+    print(f"Model is trained on device {device}")
+
     optimizer = AdamW(model.parameters(), lr=config.learning_rate)
     if config.optimier_checkpoint is not None:
         optimizer.load_state_dict(torch.load(config.optimier_checkpoint))
@@ -129,30 +159,35 @@ if __name__ == "__main__":
     if config.lr_scheduler_checkpoint is not None:
         lr_scheduler.load_state_dict(torch.load(config.lr_scheduler_checkpoint))
     metric = evaluate.load("mean_iou")
-    # prepare training device
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    model.to(device)
-    print(f"Model is trained on device {device}")
 
     # training loop
     best_miou = 0
-    print("Start training")
+    # print("Start training")
     for epoch in range(config.num_epochs):
         epoch_loss_history = []
         progress_bar = tqdm(range(len(train_ds)), desc=f"Epoch {epoch + 1}")
         model.train()
+        # start_time = time.time()
         for i, batch in enumerate(train_ds):
             input_image = batch["pixel_values"].to(device)
             labels = batch["labels"].to(device)
+            # loaded_time = time.time()
+            # print(f"Loaded time: {loaded_time - start_time}")
             outputs = model(pixel_values=input_image, labels=labels)
+            # forward_time = time.time()
+            # print(f"Forward time: {forward_time - loaded_time}")
             loss = outputs.loss
             if i % config.train_log_steps == 0:
                 wandb.log({"train/loss": loss.item()}, step=epoch * len(train_ds) + i)
             epoch_loss_history.append(loss.item())
+            # log_time = time.time()
+            # print(f"Log time: {log_time - forward_time}")
             loss.backward()
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
+            # backward_time = time.time()
+            # print(f"Backward time: {backward_time - log_time}")
             progress_bar.update(1)
         
         eval_results = validate(model, metric, validation_ds, dataset.id2label, config.eval_images_to_log, device)
