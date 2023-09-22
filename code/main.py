@@ -1,18 +1,12 @@
-from datasets import load_dataset
-from labels import labels, Label
-from transformers import AutoImageProcessor
-from torchvision.transforms import ColorJitter, ToTensor
 import numpy as np 
 import evaluate
 import numpy as np
 import torch
-from torch import nn
 from transformers import AutoModelForSemanticSegmentation, AdamW, get_scheduler, get_polynomial_decay_schedule_with_warmup
 import wandb
 import os
 import random
 from tqdm import tqdm
-import time
 
 import config
 from dataset import Dataset
@@ -24,23 +18,14 @@ def validate(model, metric, eval_ds, id2labels, num_images_to_log, device):
     eval_loss = 0
     progress_bar = tqdm(range(len(eval_ds)), desc=f"Evaluating")
     image_log_dict = {}
-    # start_time = time.time()
     for i, batch in enumerate(eval_ds):
         input_image = batch["pixel_values"].to(device)
         gt_labels = batch["labels"].to(device)
-        # loaded_time = time.time()
-        # print(f"Loaded time: {loaded_time - start_time}")
         with torch.no_grad():
             outputs = model(pixel_values=input_image, labels=gt_labels)
-            # forward_time = time.time()
-            # print(f"Forward time: {forward_time - loaded_time}")
             loss = outputs.loss
             eval_loss += loss.item()
-            # loss_time = time.time()
-            # print(f"Loss time: {loss_time - forward_time}")
             pred_labels = add_batch_to_metrics(metric, outputs.logits, gt_labels)
-            # log_time = time.time()
-            # print(f"Log time: {log_time - forward_time}")
         if i == 0:
             input_image = input_image.cpu().numpy()
             gt_labels = gt_labels.cpu().numpy()
@@ -55,14 +40,9 @@ def validate(model, metric, eval_ds, id2labels, num_images_to_log, device):
                         "class_labels" : id2labels
                     }
                 })
-            # image_log_time = time.time()
-            # print(f"Image log time: {image_log_time - log_time}")
         progress_bar.update(1)
-        # start_time = time.time()
-    # start_time = time.time()
+
     metric_results = compute_metrics(metric, num_labels)
-    # compute_time = time.time()
-    # print(f"Compute metrics time: {compute_time - start_time}")
     print(metric_results)
     result_dict = {
         "eval/loss": eval_loss / len(eval_ds),
@@ -126,32 +106,22 @@ if __name__ == "__main__":
 
     # training loop
     best_miou = 0
-    # print("Start training")
     for epoch in range(config.num_epochs):
         epoch_loss_history = []
         progress_bar = tqdm(range(len(train_ds)), desc=f"Epoch {epoch + 1}")
         model.train()
-        # start_time = time.time()
         for i, batch in enumerate(train_ds):
             input_image = batch["pixel_values"].to(device)
             labels = batch["labels"].to(device)
-            # loaded_time = time.time()
-            # print(f"Loaded time: {loaded_time - start_time}")
             outputs = model(pixel_values=input_image, labels=labels)
-            # forward_time = time.time()
-            # print(f"Forward time: {forward_time - loaded_time}")
             loss = outputs.loss
             if i % config.train_log_steps == 0:
                 wandb.log({"train/loss": loss.item()}, step=epoch * len(train_ds) + i)
             epoch_loss_history.append(loss.item())
-            # log_time = time.time()
-            # print(f"Log time: {log_time - forward_time}")
             loss.backward()
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
-            # backward_time = time.time()
-            # print(f"Backward time: {backward_time - log_time}")
             progress_bar.update(1)
         
         eval_results = validate(model, metric, validation_ds, dataset.id2label, config.eval_images_to_log, device)

@@ -7,7 +7,6 @@ from torchvision.transforms import ColorJitter
 import datetime
 
 from labels import labels
-from visualization import visualize_image, visualize_mask, visualize_image_with_mask
 
 
 class Dataset:
@@ -28,14 +27,7 @@ class Dataset:
             self.validation_ds = self.validation_ds.select(range(sample_size))
             self.test_ds = self.test_ds.select(range(sample_size))
             print("Dataset is sampled")
-        # print one example from test_ds
-        # print("Example from dataset class")
-        # example = next(iter(self.test_ds))
-        # ex_image = np.array(example["image"])
-        # ex_labels = np.array(example["semantic_segmentation"])
-        # print(ex_image.shape)
-        # print(ex_labels.shape)
-        # print(np.unique(ex_labels))
+
         # create lebel2id and id2label dictionaries
         self.label2id = {label.name: label.id for label in labels}
         self.id2label = {label.id: label.name for label in labels}
@@ -54,7 +46,6 @@ class Dataset:
         # set format of datasets to torch
         self.train_ds.set_format("torch")
         self.validation_ds.set_format("torch")
-        # self.test_ds.set_format("torch")
         # transform the dataset
         self.train_ds_transformed, self.validation_ds_transformed, self.inference_ds_transformed = None, None, None
         if self.rescale:
@@ -65,15 +56,6 @@ class Dataset:
             self.train_ds_transformed = self.train_ds.with_transform(self.train_transforms)
             self.validation_ds_transformed = self.validation_ds.with_transform(self.train_transforms)
             self.inference_ds_transformed = self.validation_ds.with_transform(self.inference_transforms)
-
-        # self.train_ds_transformed = self.train_ds.with_transform(self.train_transforms)
-        # self.validation_ds_transformed = self.validation_ds.with_transform(self.train_transforms)
-        # self.inference_ds_transformed = None
-        # if self.rescale:
-        #     self.inference_ds_transformed = self.validation_ds.with_transform(self.test_transforms)
-        # else:
-        #     self.inference_ds_transformed = self.validation_ds.with_transform(self.inference_transforms)
-        # self.test_ds_transformed = self.test_ds.with_transform(self.test_transforms) 
          
         self.train_dataloader = DataLoader(self.train_ds_transformed, batch_size=self.batch_size, shuffle=True)
         self.validation_dataloader = DataLoader(self.validation_ds_transformed, batch_size=self.batch_size, shuffle=False)
@@ -82,26 +64,7 @@ class Dataset:
 
         self.original_trained_dataloader = DataLoader(self.train_ds, batch_size=self.batch_size, shuffle=True)
         self.original_validation_dataloader = DataLoader(self.validation_ds, batch_size=1, shuffle=False)
-        # self.original_test_dataloader = DataLoader(self.test_ds, batch_size=self.batch_size, shuffle=False)
-
-        # print("Validation example from dataset class")
-        # example = next(iter(self.inference_dataloader))
-        # ex_image = example["pixel_values"]
-        # ex_labels = example["labels"]
-        # print(type(ex_image))
-        # print(ex_image.shape)
-        # print(type(ex_labels))
-        # print(ex_labels.shape)
-        # print(torch.unique(ex_labels[0]))
-
-
-    # def extract_single_channel(self, image):
-    #     # Split the image into channels (R, G, B)
-    #     r, _, _ = image.split()
-
-    #     # Create a new single-channel image using the channel you want (e.g., red channel)
-    #     return r
-
+        
     def extract_single_channel(self, image):
         return image[:, :, 0]
 
@@ -199,17 +162,11 @@ class Dataset:
     def get_inference_dataloader(self):
         return self.inference_dataloader
     
-    # def get_test_dataloader(self):
-    #     return self.test_dataloader
-    
     def get_original_train_dataloader(self):
         return self.original_trained_dataloader
     
     def get_original_validation_dataloder(self):
         return self.original_validation_dataloader
-    
-    # def get_original_test_dataloader(self):
-    #     return self.original_test_dataloader
     
     def get_num_labels(self):
         return len(self.label2id)

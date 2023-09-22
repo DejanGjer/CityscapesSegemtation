@@ -1,20 +1,16 @@
-from datasets import load_dataset
-from labels import labels, Label
-from transformers import AutoImageProcessor
-from torchvision.transforms import ColorJitter, ToTensor
 import numpy as np 
 import evaluate
 import numpy as np
 import torch
 from torch import nn
-from transformers import AutoModelForSemanticSegmentation, TrainingArguments, Trainer
+from transformers import AutoModelForSemanticSegmentation
 import os
 from tqdm import tqdm
 
 import config
 from dataset import Dataset
 from visualization import visualize_mask, visualize_image, visualize_image_with_mask
-from metrics import compute_metrics, add_batch_to_metrics
+from metrics import compute_metrics
 
 def visualize_original_image_and_mask(original_image, original_mask, save_dir, index):
     visualize_image(original_image, save_dir, index, "original_")
@@ -87,8 +83,6 @@ def inference(model_checkpoint, dataset, id2label, label2id, device, root_dir):
             else:
                 gt_mask, predicted_mask = aggregate_logits(outputs.logits, labels, original_image, original_mask, dataset, (1024, 2048), 
                                 config.image_size["width"], config.inference_stride, os.path.join(root_dir, f"test_{i}"), i)
-            # print(f"Predection mask: {predicted_mask.shape}")
-            # print(f"Original mask: {original_mask.shape}")
             metric.add_batch(
                 predictions=np.expand_dims(predicted_mask, axis=0),    
                 references=np.expand_dims(gt_mask, axis=0)
